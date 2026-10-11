@@ -33,11 +33,9 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Campus Marketplace',
       debugShowCheckedModeBanner: false,
-      home: AuthGate(
-        itemRepositories: [ItemRepositoryApi()],
-        favoritesRepository: FavoritesRepositoryDrift(database),
-        draftRepository: ListingDraftRepositoryDrift(database),
-      ),
+
+      // ใช้ทดสอบ Firebase Authentication ชั่วคราว
+      home: const LoginPage(),
     );
   }
 
