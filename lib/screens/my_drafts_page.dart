@@ -71,7 +71,9 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
               ),
               actions: [
                 TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
+                  onPressed: () {
+                    Navigator.pop(dialogContext);
+                  },
                   child: const Text('ยกเลิก'),
                 ),
                 FilledButton(
@@ -117,6 +119,7 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
       throw Exception('รูปภาพยังมีขนาดใหญ่เกินไป กรุณาเลือกรูปที่เล็กลง');
     }
 
+    // คืนค่า Base64 ดิบ ไม่ใส่ prefix ในฟังก์ชันนี้
     return base64Encode(compressedBytes);
   }
 
@@ -138,6 +141,7 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
 
     if (!await imageFile.exists()) {
       if (!mounted) return;
+
       _showMessage('ไม่พบไฟล์รูปภาพของร่างนี้ กรุณาตรวจสอบรูปภาพ');
       return;
     }
@@ -158,23 +162,39 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
         description: draft.description,
         category: draft.category,
         imageUrl: '',
-        img: base64Image,
+        img: 'data:image/jpeg;base64,$base64Image',
         sellerId: user.uid,
       );
 
+      // บันทึกสินค้าลง Firestore
       await _itemRepository.postItem(item);
 
-      await widget.repository.deleteDraft(draft.id);
-
       if (!mounted) return;
-
-      setState(_refreshDrafts);
 
       _showMessage('โพสต์ "${draft.title}" ขายสำเร็จแล้ว');
-    } catch (e) {
+
+      // ลบร่างแยกจากการโพสต์
+      try {
+        await widget.repository.deleteDraft(draft.id);
+
+        if (!mounted) return;
+
+        setState(_refreshDrafts);
+      } catch (e, stackTrace) {
+        debugPrint('Delete draft error: $e');
+        debugPrintStack(stackTrace: stackTrace);
+
+        if (!mounted) return;
+
+        _showMessage('โพสต์สินค้าสำเร็จแล้ว แต่ลบร่างไม่สำเร็จ');
+      }
+    } catch (e, stackTrace) {
+      debugPrint('Post item error: $e');
+      debugPrintStack(stackTrace: stackTrace);
+
       if (!mounted) return;
 
-      _showMessage('โพสต์สินค้าไม่สำเร็จ: $e');
+      _showMessage('บันทึกสินค้าไม่สำเร็จ: $e');
     } finally {
       if (mounted) {
         setState(() {
@@ -193,18 +213,27 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
       if (!mounted) return;
 
       setState(_refreshDrafts);
-
       _showMessage('ลบร่างประกาศแล้ว');
     } catch (e) {
       if (!mounted) return;
+
       _showMessage('ไม่สามารถลบร่างประกาศได้: $e');
     }
   }
 
   void _showMessage(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
+    if (!mounted) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      if (messenger == null) return;
+
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(message)));
+    });
   }
 
   String _formatDateTime(DateTime dateTime) {
@@ -375,11 +404,15 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
           content: Text('ต้องการลบร่าง "${draft.title}" หรือไม่?'),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
+              onPressed: () {
+                Navigator.pop(dialogContext, false);
+              },
               child: const Text('ยกเลิก'),
             ),
             TextButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
+              onPressed: () {
+                Navigator.pop(dialogContext, true);
+              },
               child: const Text('ลบ', style: TextStyle(color: Colors.red)),
             ),
           ],
