@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -9,6 +7,7 @@ import '../repositories/item_repository.dart';
 import '../repositories/favorites_repository.dart';
 import '../services/gemini_service.dart';
 import '../services/auth_service.dart';
+import '../widgets/item_image.dart';
 import 'checkout_page.dart';
 
 class HomePage extends StatefulWidget {
@@ -26,6 +25,9 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  // ลำดับของ repository ใน main.dart: [API, Firestore]
+  static const int _firestoreSourceIndex = 1;
+
   late Future<List<_SourcedItem>> _itemsFuture;
 
   final Set<int> _favoriteItemIds = <int>{};
@@ -42,15 +44,42 @@ class _HomePageState extends State<HomePage> {
       widget.repositories.map((repository) => repository.getItems()),
     );
 
-    final sourcedItems = <_SourcedItem>[];
+    final studentItems = <_SourcedItem>[];
+    final otherItems = <_SourcedItem>[];
 
     for (var i = 0; i < results.length; i++) {
       for (final item in results[i]) {
-        sourcedItems.add(_SourcedItem(item: item, sourceIndex: i));
+        final sourcedItem = _SourcedItem(item: item, sourceIndex: i);
+
+        if (i == _firestoreSourceIndex) {
+          studentItems.add(sourcedItem);
+        } else {
+          otherItems.add(sourcedItem);
+        }
       }
     }
 
-    return sourcedItems;
+    // สินค้านักศึกษา: ใหม่สุดขึ้นก่อน (id คือเวลาที่โพสต์)
+    studentItems.sort((a, b) => b.item.id.compareTo(a.item.id));
+
+    return [...studentItems, ...otherItems];
+  }
+
+  // โหลดรายการสินค้าใหม่ (ใช้ตอนดึงลงเพื่อรีเฟรช หรือกดปุ่มรีเฟรช)
+  Future<void> _reload() async {
+    final future = _loadAllItems();
+
+    setState(() {
+      _itemsFuture = future;
+    });
+
+    try {
+      await future;
+    } catch (_) {
+      // ข้อผิดพลาดจะแสดงผ่าน FutureBuilder อยู่แล้ว
+    }
+
+    await _loadFavorites();
   }
 
   Future<void> _loadFavorites() async {
@@ -67,47 +96,6 @@ class _HomePageState extends State<HomePage> {
     } catch (e) {
       debugPrint('ไม่สามารถโหลดรายการโปรดได้: $e');
     }
-  }
-
-  Widget _buildItemImage(Item item) {
-    final encodedImage = item.img;
-
-    if (encodedImage != null && encodedImage.isNotEmpty) {
-      try {
-        var base64String = encodedImage;
-
-        if (base64String.startsWith('data:') && base64String.contains(',')) {
-          base64String = base64String.split(',').last;
-        }
-
-        return Image.memory(
-          base64Decode(base64String),
-          width: 56,
-          height: 56,
-          fit: BoxFit.cover,
-          errorBuilder: (context, error, stackTrace) {
-            return const Icon(Icons.broken_image);
-          },
-        );
-      } catch (e) {
-        debugPrint('ไม่สามารถอ่านรูป Base64 ได้: $e');
-        return const Icon(Icons.broken_image, size: 40);
-      }
-    }
-
-    if (item.imageUrl.isNotEmpty) {
-      return Image.network(
-        item.imageUrl,
-        width: 56,
-        height: 56,
-        fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) {
-          return const Icon(Icons.broken_image);
-        },
-      );
-    }
-
-    return const Icon(Icons.image_not_supported, size: 40);
   }
 
   Future<void> _testGemini() async {
@@ -156,6 +144,11 @@ class _HomePageState extends State<HomePage> {
         title: const Text('Campus Marketplace'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'รีเฟรชสินค้า',
+            onPressed: _reload,
+          ),
+          IconButton(
             icon: const Icon(Icons.auto_awesome),
             tooltip: 'ทดสอบ Gemini',
             onPressed: _testGemini,
@@ -195,106 +188,118 @@ class _HomePageState extends State<HomePage> {
             return const Center(child: Text('ไม่พบสินค้า'));
           }
 
-          return ListView.builder(
-            itemCount: sourcedItems.length,
-            itemBuilder: (context, index) {
-              final sourcedItem = sourcedItems[index];
-              final item = sourcedItem.item;
-              final isFavorite = _favoriteItemIds.contains(item.id);
+          return RefreshIndicator(
+            onRefresh: _reload,
+            child: ListView.builder(
+              physics: const AlwaysScrollableScrollPhysics(),
+              itemCount: sourcedItems.length,
+              itemBuilder: (context, index) {
+                final sourcedItem = sourcedItems[index];
+                final item = sourcedItem.item;
+                final isFavorite = _favoriteItemIds.contains(item.id);
 
-              final isFirestore = sourcedItem.sourceIndex == 1;
+                final isFirestore =
+                    sourcedItem.sourceIndex == _firestoreSourceIndex;
 
-              return ListTile(
-                leading: SizedBox(
-                  width: 56,
-                  height: 56,
-                  child: _buildItemImage(item),
-                ),
-                title: Text(item.title),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('${item.price} บาท'),
-                    const SizedBox(height: 4),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Chip(
-                        avatar: Icon(
-                          isFirestore ? Icons.school : Icons.storefront,
-                          size: 16,
+                // รูปที่ใช้แสดง: Base64 (สินค้านักศึกษา) หรือ URL (สินค้าจาก API)
+                final imageSource = ItemImage.pick(
+                  img: item.img,
+                  imageUrl: item.imageUrl,
+                );
+
+                return ListTile(
+                  leading: ItemImage(source: imageSource, size: 56),
+                  title: Text(item.title),
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('${item.price} บาท'),
+                      const SizedBox(height: 4),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Chip(
+                          avatar: Icon(
+                            isFirestore ? Icons.school : Icons.storefront,
+                            size: 16,
+                          ),
+                          label: Text(
+                            isFirestore
+                                ? '🎓 สินค้านักศึกษา'
+                                : '🏪 สินค้าจาก API',
+                          ),
+                          visualDensity: VisualDensity.compact,
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
                         ),
-                        label: Text(
-                          isFirestore
-                              ? '🎓 สินค้านักศึกษา'
-                              : '🏪 สินค้าจาก API',
+                      ),
+                    ],
+                  ),
+                  isThreeLine: true,
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: Icon(
+                          isFavorite ? Icons.favorite : Icons.favorite_border,
                         ),
-                        visualDensity: VisualDensity.compact,
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        color: isFavorite ? Colors.red : null,
+                        tooltip: isFavorite
+                            ? 'อยู่ในรายการโปรดแล้ว'
+                            : 'เพิ่มในรายการโปรด',
+                        onPressed: () async {
+                          final messenger = ScaffoldMessenger.of(context);
+
+                          try {
+                            await widget.favoritesRepository.addFavorite(
+                              item.id,
+                              item.title,
+                              item.price,
+                              imageSource ?? '',
+                            );
+
+                            if (!mounted) return;
+
+                            setState(() {
+                              _favoriteItemIds.add(item.id);
+                            });
+
+                            messenger.showSnackBar(
+                              const SnackBar(
+                                content: Text('เพิ่มสินค้าในรายการโปรดแล้ว'),
+                                duration: Duration(seconds: 1),
+                              ),
+                            );
+                          } catch (e) {
+                            messenger.showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  'ไม่สามารถเพิ่มรายการโปรดได้: $e',
+                                ),
+                              ),
+                            );
+                          }
+                        },
                       ),
-                    ),
-                  ],
-                ),
-                isThreeLine: true,
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      icon: Icon(
-                        isFavorite ? Icons.favorite : Icons.favorite_border,
-                      ),
-                      color: isFavorite ? Colors.red : null,
-                      tooltip: isFavorite
-                          ? 'อยู่ในรายการโปรดแล้ว'
-                          : 'เพิ่มในรายการโปรด',
-                      onPressed: () async {
-                        try {
-                          await widget.favoritesRepository.addFavorite(
-                            item.id,
-                            item.title,
-                            item.price,
-                            item.imageUrl,
-                          );
-
-                          if (!mounted) return;
-
-                          setState(() {
-                            _favoriteItemIds.add(item.id);
-                          });
-
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('เพิ่มสินค้าในรายการโปรดแล้ว'),
-                              duration: Duration(seconds: 1),
-                            ),
-                          );
-                        } catch (e) {
-                          if (!mounted) return;
+                      IconButton(
+                        icon: const Icon(Icons.add_shopping_cart),
+                        tooltip: 'เพิ่มลงตะกร้า',
+                        onPressed: () {
+                          context.read<CartModel>().add(item);
 
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
-                              content: Text('ไม่สามารถเพิ่มรายการโปรดได้: $e'),
+                              content: Text(
+                                'เพิ่ม "${item.title}" ลงตะกร้าแล้ว',
+                              ),
                             ),
                           );
-                        }
-                      },
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.add_shopping_cart),
-                      tooltip: 'เพิ่มลงตะกร้า',
-                      onPressed: () {
-                        context.read<CartModel>().add(item);
-
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('เพิ่ม "${item.title}" ลงตะกร้าแล้ว'),
-                          ),
-                        );
-                      },
-                    ),
-                  ],
-                ),
-              );
-            },
+                        },
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
           );
         },
       ),

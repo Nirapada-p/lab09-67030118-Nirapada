@@ -27,10 +27,14 @@ class MainScaffold extends StatefulWidget {
 class _MainScaffoldState extends State<MainScaffold> {
   int _selectedIndex = 0;
 
+  // เปลี่ยนค่านี้เพื่อให้ HomePage สร้างใหม่และโหลดสินค้าล่าสุดจาก Firestore
+  int _homeReloadCount = 0;
+
   @override
   Widget build(BuildContext context) {
     final pages = [
       HomePage(
+        key: ValueKey(_homeReloadCount),
         repositories: widget.itemRepositories,
         favoritesRepository: widget.favoritesRepository,
       ),
@@ -44,6 +48,11 @@ class _MainScaffoldState extends State<MainScaffold> {
         currentIndex: _selectedIndex,
         onTap: (index) {
           setState(() {
+            // กลับมาหน้าหลักจากแท็บอื่น ให้โหลดสินค้าใหม่ (เห็นสินค้าที่เพิ่งโพสต์)
+            if (index == 0 && _selectedIndex != 0) {
+              _homeReloadCount++;
+            }
+
             _selectedIndex = index;
           });
         },

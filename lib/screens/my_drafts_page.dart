@@ -119,7 +119,6 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
       throw Exception('รูปภาพยังมีขนาดใหญ่เกินไป กรุณาเลือกรูปที่เล็กลง');
     }
 
-    // คืนค่า Base64 ดิบ ไม่ใส่ prefix ในฟังก์ชันนี้
     return base64Encode(compressedBytes);
   }
 
@@ -141,7 +140,6 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
 
     if (!await imageFile.exists()) {
       if (!mounted) return;
-
       _showMessage('ไม่พบไฟล์รูปภาพของร่างนี้ กรุณาตรวจสอบรูปภาพ');
       return;
     }
@@ -179,7 +177,9 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
 
         if (!mounted) return;
 
-        setState(_refreshDrafts);
+        setState(() {
+          _refreshDrafts();
+        });
       } catch (e, stackTrace) {
         debugPrint('Delete draft error: $e');
         debugPrintStack(stackTrace: stackTrace);
@@ -212,7 +212,9 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
 
       if (!mounted) return;
 
-      setState(_refreshDrafts);
+      setState(() {
+        _refreshDrafts();
+      });
       _showMessage('ลบร่างประกาศแล้ว');
     } catch (e) {
       if (!mounted) return;
@@ -224,16 +226,9 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
   void _showMessage(String message) {
     if (!mounted) return;
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-
-      final messenger = ScaffoldMessenger.maybeOf(context);
-      if (messenger == null) return;
-
-      messenger
-        ..hideCurrentSnackBar()
-        ..showSnackBar(SnackBar(content: Text(message)));
-    });
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   String _formatDateTime(DateTime dateTime) {
@@ -285,7 +280,9 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
                     const SizedBox(height: 16),
                     ElevatedButton(
                       onPressed: () {
-                        setState(_refreshDrafts);
+                        setState(() {
+                          _refreshDrafts();
+                        });
                       },
                       child: const Text('ลองใหม่'),
                     ),

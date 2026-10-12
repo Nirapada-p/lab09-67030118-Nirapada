@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../repositories/favorites_repository.dart';
 import '../database/app_database.dart';
+import '../widgets/item_image.dart';
 
 class FavoritesPage extends StatefulWidget {
   final FavoritesRepository repository;
@@ -72,14 +73,8 @@ class _FavoritesPageState extends State<FavoritesPage> {
               final favorite = favorites[index];
 
               return ListTile(
-                leading: Image.network(
-                  favorite.imageUrl,
-                  width: 48,
-                  height: 48,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) =>
-                      const Icon(Icons.broken_image),
-                ),
+                // imageUrl อาจเป็น URL หรือ Base64 (สินค้าที่นักศึกษาโพสต์เอง)
+                leading: ItemImage(source: favorite.imageUrl, size: 48),
                 title: Text(favorite.title),
                 subtitle: Text('${favorite.price} บาท'),
                 trailing: IconButton(
