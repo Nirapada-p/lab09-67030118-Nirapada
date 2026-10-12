@@ -6,7 +6,12 @@ class Item {
   final double price;
   final String description;
   final String category;
+
+  // URL สำหรับสินค้าจาก API หรือข้อมูลเก่า
   final String imageUrl;
+
+  // ข้อมูลรูปภาพ Base64 สำหรับสินค้าที่โพสต์เอง
+  final String? img;
 
   // null ได้ เพราะสินค้าจาก FakeStore API ไม่มี sellerId
   final String? sellerId;
@@ -18,6 +23,7 @@ class Item {
     required this.description,
     required this.category,
     required this.imageUrl,
+    this.img,
     this.sellerId,
   });
 
@@ -37,11 +43,13 @@ class Item {
   // แปลง Item เป็น Map เพื่อบันทึกลง Firestore
   Map<String, dynamic> toFirestore() {
     return {
+      'id': id,
       'title': title,
       'price': price,
       'description': description,
       'category': category,
       'imageUrl': imageUrl,
+      'img': img,
       'sellerId': sellerId,
     };
   }
@@ -51,7 +59,6 @@ class Item {
     final data = doc.data() ?? <String, dynamic>{};
 
     return Item(
-      // คงชนิด id เป็น int เพื่อรองรับระบบเดิม
       id: data['id'] is int
           ? data['id'] as int
           : int.tryParse(doc.id) ?? doc.id.hashCode,
@@ -60,6 +67,7 @@ class Item {
       description: data['description'] as String? ?? '',
       category: data['category'] as String? ?? '',
       imageUrl: data['imageUrl'] as String? ?? data['image'] as String? ?? '',
+      img: data['img'] as String?,
       sellerId: data['sellerId'] as String?,
     );
   }

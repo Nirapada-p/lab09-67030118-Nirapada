@@ -1,13 +1,14 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 
 import '../database/app_database.dart';
 import '../models/item.dart';
 import '../repositories/listing_draft_repository.dart';
 import '../repositories/item_repository_firestore.dart';
-import '../services/storage_service.dart';
 
 class MyDraftsPage extends StatefulWidget {
   final ListingDraftRepository repository;
@@ -22,7 +23,7 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
   late Future<List<ListingDraftRow>> _draftsFuture;
 
   final Set<int> _postingDraftIds = <int>{};
-  final StorageService _storageService = StorageService();
+
   final ItemRepositoryFirestore _itemRepository = ItemRepositoryFirestore();
 
   @override
@@ -99,6 +100,26 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
     return price;
   }
 
+  Future<String> _compressImageToBase64(String imagePath) async {
+    final compressedBytes = await FlutterImageCompress.compressWithFile(
+      imagePath,
+      minWidth: 480,
+      minHeight: 480,
+      quality: 35,
+      format: CompressFormat.jpeg,
+    );
+
+    if (compressedBytes == null || compressedBytes.isEmpty) {
+      throw Exception('ไม่สามารถบีบอัดรูปภาพได้ กรุณาเลือกรูปใหม่');
+    }
+
+    if (compressedBytes.length > 400 * 1024) {
+      throw Exception('รูปภาพยังมีขนาดใหญ่เกินไป กรุณาเลือกรูปที่เล็กลง');
+    }
+
+    return base64Encode(compressedBytes);
+  }
+
   Future<void> _postDraft(ListingDraftRow draft) async {
     if (_postingDraftIds.contains(draft.id)) return;
 
@@ -109,7 +130,6 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
       return;
     }
 
-    // ถามราคาก่อนเริ่มอัปโหลดทุกครั้ง
     final price = await _showPriceDialog(draft);
 
     if (!mounted || price == null) return;
@@ -127,35 +147,28 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
     });
 
     try {
-      // 1. อัปโหลดรูปไป Storage และรอรับ Download URL
-      final imageUrl = await _storageService.uploadListingImage(
-        imageFile,
-        user.uid,
-      );
+      final base64Image = await _compressImageToBase64(imageFile.path);
 
-      // 2. สร้าง Item โดยใช้ URL ที่อัปโหลดสำเร็จแล้ว
+      if (!mounted) return;
+
       final item = Item(
         id: DateTime.now().millisecondsSinceEpoch,
         title: draft.title,
         price: price,
         description: draft.description,
         category: draft.category,
-        imageUrl: imageUrl,
+        imageUrl: '',
+        img: base64Image,
         sellerId: user.uid,
       );
 
-      // 3. บันทึกสินค้าใน Firestore
       await _itemRepository.postItem(item);
 
-      // 4. ลบร่างจาก Local Database หลังบันทึกสำเร็จเท่านั้น
       await widget.repository.deleteDraft(draft.id);
 
       if (!mounted) return;
 
-      // 5. รีเฟรชรายการร่าง
-      setState(() {
-        _refreshDrafts();
-      });
+      setState(_refreshDrafts);
 
       _showMessage('โพสต์ "${draft.title}" ขายสำเร็จแล้ว');
     } catch (e) {
@@ -179,9 +192,7 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
 
       if (!mounted) return;
 
-      setState(() {
-        _refreshDrafts();
-      });
+      setState(_refreshDrafts);
 
       _showMessage('ลบร่างประกาศแล้ว');
     } catch (e) {
@@ -331,7 +342,7 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
                                 : const Icon(Icons.cloud_upload),
                             label: Text(
                               isPosting
-                                  ? 'กำลังอัปโหลดและโพสต์...'
+                                  ? 'กำลังบีบอัดรูปและโพสต์...'
                                   : 'โพสต์ขายจริง',
                             ),
                           ),

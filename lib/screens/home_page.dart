@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -31,7 +33,6 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-
     _itemsFuture = _loadAllItems();
     _loadFavorites();
   }
@@ -66,6 +67,47 @@ class _HomePageState extends State<HomePage> {
     } catch (e) {
       debugPrint('ไม่สามารถโหลดรายการโปรดได้: $e');
     }
+  }
+
+  Widget _buildItemImage(Item item) {
+    final encodedImage = item.img;
+
+    if (encodedImage != null && encodedImage.isNotEmpty) {
+      try {
+        var base64String = encodedImage;
+
+        if (base64String.startsWith('data:') && base64String.contains(',')) {
+          base64String = base64String.split(',').last;
+        }
+
+        return Image.memory(
+          base64Decode(base64String),
+          width: 56,
+          height: 56,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            return const Icon(Icons.broken_image);
+          },
+        );
+      } catch (e) {
+        debugPrint('ไม่สามารถอ่านรูป Base64 ได้: $e');
+        return const Icon(Icons.broken_image, size: 40);
+      }
+    }
+
+    if (item.imageUrl.isNotEmpty) {
+      return Image.network(
+        item.imageUrl,
+        width: 56,
+        height: 56,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          return const Icon(Icons.broken_image);
+        },
+      );
+    }
+
+    return const Icon(Icons.image_not_supported, size: 40);
   }
 
   Future<void> _testGemini() async {
@@ -160,18 +202,13 @@ class _HomePageState extends State<HomePage> {
               final item = sourcedItem.item;
               final isFavorite = _favoriteItemIds.contains(item.id);
 
-              // Repository ตัวแรกคือ API
-              // Repository ตัวที่สองคือ Firestore
               final isFirestore = sourcedItem.sourceIndex == 1;
 
               return ListTile(
-                leading: Image.network(
-                  item.imageUrl,
-                  width: 48,
-                  height: 48,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) =>
-                      const Icon(Icons.broken_image),
+                leading: SizedBox(
+                  width: 56,
+                  height: 56,
+                  child: _buildItemImage(item),
                 ),
                 title: Text(item.title),
                 subtitle: Column(
