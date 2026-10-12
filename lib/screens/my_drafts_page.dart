@@ -1,7 +1,13 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 import '../database/app_database.dart';
+import '../models/item.dart';
 import '../repositories/listing_draft_repository.dart';
+import '../repositories/item_repository_firestore.dart';
+import '../services/storage_service.dart';
 
 class MyDraftsPage extends StatefulWidget {
   final ListingDraftRepository repository;
@@ -15,32 +21,179 @@ class MyDraftsPage extends StatefulWidget {
 class _MyDraftsPageState extends State<MyDraftsPage> {
   late Future<List<ListingDraftRow>> _draftsFuture;
 
+  final Set<int> _postingDraftIds = <int>{};
+  final StorageService _storageService = StorageService();
+  final ItemRepositoryFirestore _itemRepository = ItemRepositoryFirestore();
+
   @override
   void initState() {
     super.initState();
+    _refreshDrafts();
+  }
+
+  void _refreshDrafts() {
     _draftsFuture = widget.repository.getAllDrafts();
   }
 
+  Future<double?> _showPriceDialog(ListingDraftRow draft) async {
+    final controller = TextEditingController();
+    String? errorMessage;
+
+    final price = await showDialog<double>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('กำหนดราคาสินค้า'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('สินค้า: ${draft.title}'),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: controller,
+                    autofocus: true,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: InputDecoration(
+                      labelText: 'ราคา (บาท)',
+                      hintText: 'เช่น 150 หรือ 99.50',
+                      errorText: errorMessage,
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('ยกเลิก'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final value = double.tryParse(controller.text.trim());
+
+                    if (value == null || !value.isFinite || value <= 0) {
+                      setDialogState(() {
+                        errorMessage = 'กรุณากรอกราคาเป็นตัวเลขที่มากกว่า 0';
+                      });
+                      return;
+                    }
+
+                    Navigator.pop(dialogContext, value);
+                  },
+                  child: const Text('ยืนยันราคา'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    controller.dispose();
+    return price;
+  }
+
+  Future<void> _postDraft(ListingDraftRow draft) async {
+    if (_postingDraftIds.contains(draft.id)) return;
+
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      _showMessage('กรุณาเข้าสู่ระบบก่อนโพสต์สินค้า');
+      return;
+    }
+
+    // ถามราคาก่อนเริ่มอัปโหลดทุกครั้ง
+    final price = await _showPriceDialog(draft);
+
+    if (!mounted || price == null) return;
+
+    final imageFile = File(draft.imagePath);
+
+    if (!await imageFile.exists()) {
+      if (!mounted) return;
+      _showMessage('ไม่พบไฟล์รูปภาพของร่างนี้ กรุณาตรวจสอบรูปภาพ');
+      return;
+    }
+
+    setState(() {
+      _postingDraftIds.add(draft.id);
+    });
+
+    try {
+      // 1. อัปโหลดรูปไป Storage และรอรับ Download URL
+      final imageUrl = await _storageService.uploadListingImage(
+        imageFile,
+        user.uid,
+      );
+
+      // 2. สร้าง Item โดยใช้ URL ที่อัปโหลดสำเร็จแล้ว
+      final item = Item(
+        id: DateTime.now().millisecondsSinceEpoch,
+        title: draft.title,
+        price: price,
+        description: draft.description,
+        category: draft.category,
+        imageUrl: imageUrl,
+        sellerId: user.uid,
+      );
+
+      // 3. บันทึกสินค้าใน Firestore
+      await _itemRepository.postItem(item);
+
+      // 4. ลบร่างจาก Local Database หลังบันทึกสำเร็จเท่านั้น
+      await widget.repository.deleteDraft(draft.id);
+
+      if (!mounted) return;
+
+      // 5. รีเฟรชรายการร่าง
+      setState(() {
+        _refreshDrafts();
+      });
+
+      _showMessage('โพสต์ "${draft.title}" ขายสำเร็จแล้ว');
+    } catch (e) {
+      if (!mounted) return;
+
+      _showMessage('โพสต์สินค้าไม่สำเร็จ: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _postingDraftIds.remove(draft.id);
+        });
+      }
+    }
+  }
+
   Future<void> _deleteDraft(int id) async {
+    if (_postingDraftIds.contains(id)) return;
+
     try {
       await widget.repository.deleteDraft(id);
 
       if (!mounted) return;
 
       setState(() {
-        _draftsFuture = widget.repository.getAllDrafts();
+        _refreshDrafts();
       });
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('ลบร่างประกาศแล้ว')));
+      _showMessage('ลบร่างประกาศแล้ว');
     } catch (e) {
       if (!mounted) return;
-
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('ไม่สามารถลบร่างประกาศได้: $e')));
+      _showMessage('ไม่สามารถลบร่างประกาศได้: $e');
     }
+  }
+
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   String _formatDateTime(DateTime dateTime) {
@@ -49,7 +202,6 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
     final day = localDateTime.day.toString().padLeft(2, '0');
     final month = localDateTime.month.toString().padLeft(2, '0');
     final year = localDateTime.year;
-
     final hour = localDateTime.hour.toString().padLeft(2, '0');
     final minute = localDateTime.minute.toString().padLeft(2, '0');
 
@@ -63,12 +215,10 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
       body: FutureBuilder<List<ListingDraftRow>>(
         future: _draftsFuture,
         builder: (context, snapshot) {
-          // Loading
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
 
-          // Error
           if (snapshot.hasError) {
             return Center(
               child: Padding(
@@ -95,9 +245,7 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
                     const SizedBox(height: 16),
                     ElevatedButton(
                       onPressed: () {
-                        setState(() {
-                          _draftsFuture = widget.repository.getAllDrafts();
-                        });
+                        setState(_refreshDrafts);
                       },
                       child: const Text('ลองใหม่'),
                     ),
@@ -107,10 +255,8 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
             );
           }
 
-          // Success
           final drafts = snapshot.data ?? [];
 
-          // Empty
           if (drafts.isEmpty) {
             return const Center(
               child: Column(
@@ -128,7 +274,8 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
                   ),
                   SizedBox(height: 8),
                   Text(
-                    'เมื่อบันทึกร่างประกาศแล้ว\nร่างประกาศจะแสดงที่หน้านี้',
+                    'เมื่อบันทึกร่างประกาศแล้ว\n'
+                    'ร่างประกาศจะแสดงที่หน้านี้',
                     textAlign: TextAlign.center,
                   ),
                 ],
@@ -136,12 +283,12 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
             );
           }
 
-          // Success + มีข้อมูล
           return ListView.builder(
             padding: const EdgeInsets.all(12),
             itemCount: drafts.length,
             itemBuilder: (context, index) {
               final draft = drafts[index];
+              final isPosting = _postingDraftIds.contains(draft.id);
 
               return Card(
                 margin: const EdgeInsets.only(bottom: 12),
@@ -166,15 +313,38 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
                           'แก้ไขล่าสุด: '
                           '${_formatDateTime(draft.updatedAt)}',
                         ),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            onPressed: isPosting
+                                ? null
+                                : () => _postDraft(draft),
+                            icon: isPosting
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.cloud_upload),
+                            label: Text(
+                              isPosting
+                                  ? 'กำลังอัปโหลดและโพสต์...'
+                                  : 'โพสต์ขายจริง',
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ),
                   trailing: IconButton(
                     icon: const Icon(Icons.delete_outline),
                     tooltip: 'ลบร่างประกาศ',
-                    onPressed: () {
-                      _showDeleteConfirmation(draft);
-                    },
+                    onPressed: isPosting
+                        ? null
+                        : () => _showDeleteConfirmation(draft),
                   ),
                 ),
               );
@@ -194,15 +364,11 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
           content: Text('ต้องการลบร่าง "${draft.title}" หรือไม่?'),
           actions: [
             TextButton(
-              onPressed: () {
-                Navigator.pop(dialogContext, false);
-              },
+              onPressed: () => Navigator.pop(dialogContext, false),
               child: const Text('ยกเลิก'),
             ),
             TextButton(
-              onPressed: () {
-                Navigator.pop(dialogContext, true);
-              },
+              onPressed: () => Navigator.pop(dialogContext, true),
               child: const Text('ลบ', style: TextStyle(color: Colors.red)),
             ),
           ],
@@ -210,7 +376,7 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
       },
     );
 
-    if (shouldDelete == true) {
+    if (shouldDelete == true && mounted) {
       await _deleteDraft(draft.id);
     }
   }

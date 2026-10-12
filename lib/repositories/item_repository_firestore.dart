@@ -12,61 +12,33 @@ class ItemRepositoryFirestore implements ItemRepository {
   CollectionReference<Map<String, dynamic>> get _itemsCollection =>
       _firestore.collection('items');
 
+  // อ่านสินค้าทั้งหมดจาก Firestore
   @override
   Future<List<Item>> getItems() async {
     final snapshot = await _itemsCollection.get();
 
-    return snapshot.docs.map((doc) {
-      final data = doc.data();
-
-      return Item(
-        id: _getItemId(doc.id, data),
-        title: data['title'] as String? ?? '',
-        price: (data['price'] as num?)?.toDouble() ?? 0.0,
-        description: data['description'] as String? ?? '',
-        category: data['category'] as String? ?? '',
-        imageUrl: data['imageUrl'] as String? ?? data['image'] as String? ?? '',
-      );
-    }).toList();
+    return snapshot.docs.map((doc) => Item.fromFirestore(doc)).toList();
   }
 
+  // บันทึกสินค้าใหม่ลง Firestore
   Future<void> postItem(Item item) async {
-    await _itemsCollection.add({
-      'id': item.id,
-      'title': item.title,
-      'price': item.price,
-      'description': item.description,
-      'category': item.category,
-      'imageUrl': item.imageUrl,
-    });
+    final sellerId = item.sellerId;
+
+    if (sellerId == null || sellerId.isEmpty) {
+      throw ArgumentError('ไม่สามารถโพสต์สินค้าได้ เนื่องจากไม่มี sellerId');
+    }
+
+    await _itemsCollection.add(item.toFirestore());
   }
 
+  // ติดตามสินค้าของผู้ขายแต่ละคน
   Stream<List<Item>> watchMyListings(String sellerId) {
     return _itemsCollection
         .where('sellerId', isEqualTo: sellerId)
         .snapshots()
-        .map((snapshot) {
-          return snapshot.docs.map((doc) {
-            final data = doc.data();
-
-            return Item(
-              id: _getItemId(doc.id, data),
-              title: data['title'] as String? ?? '',
-              price: (data['price'] as num?)?.toDouble() ?? 0.0,
-              description: data['description'] as String? ?? '',
-              category: data['category'] as String? ?? '',
-              imageUrl:
-                  data['imageUrl'] as String? ?? data['image'] as String? ?? '',
-            );
-          }).toList();
-        });
-  }
-
-  int _getItemId(String documentId, Map<String, dynamic> data) {
-    final id = data['id'];
-
-    if (id is int) return id;
-
-    return int.tryParse(documentId) ?? documentId.hashCode;
+        .map(
+          (snapshot) =>
+              snapshot.docs.map((doc) => Item.fromFirestore(doc)).toList(),
+        );
   }
 }
