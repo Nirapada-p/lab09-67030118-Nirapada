@@ -36,70 +36,15 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
     _draftsFuture = widget.repository.getAllDrafts();
   }
 
-  Future<double?> _showPriceDialog(ListingDraftRow draft) async {
-    final controller = TextEditingController();
-    String? errorMessage;
-
-    final price = await showDialog<double>(
+  // แก้ไข: ให้ dialog เป็น widget แยกที่ดูแล TextEditingController เอง
+  // ไม่ dispose controller ในฟังก์ชันนี้ เพราะ dialog ยังอยู่ในต้นไม้
+  // ระหว่างเล่นอนิเมชันปิด
+  Future<double?> _showPriceDialog(ListingDraftRow draft) {
+    return showDialog<double>(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text('กำหนดราคาสินค้า'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('สินค้า: ${draft.title}'),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: controller,
-                    autofocus: true,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    decoration: InputDecoration(
-                      labelText: 'ราคา (บาท)',
-                      hintText: 'เช่น 150 หรือ 99.50',
-                      errorText: errorMessage,
-                      border: const OutlineInputBorder(),
-                    ),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () {
-                    Navigator.pop(dialogContext);
-                  },
-                  child: const Text('ยกเลิก'),
-                ),
-                FilledButton(
-                  onPressed: () {
-                    final value = double.tryParse(controller.text.trim());
-
-                    if (value == null || !value.isFinite || value <= 0) {
-                      setDialogState(() {
-                        errorMessage = 'กรุณากรอกราคาเป็นตัวเลขที่มากกว่า 0';
-                      });
-                      return;
-                    }
-
-                    Navigator.pop(dialogContext, value);
-                  },
-                  child: const Text('ยืนยันราคา'),
-                ),
-              ],
-            );
-          },
-        );
-      },
+      builder: (_) => _PriceDialog(title: draft.title),
     );
-
-    controller.dispose();
-    return price;
   }
 
   Future<String> _compressImageToBase64(String imagePath) async {
@@ -420,5 +365,74 @@ class _MyDraftsPageState extends State<MyDraftsPage> {
     if (shouldDelete == true && mounted) {
       await _deleteDraft(draft.id);
     }
+  }
+}
+
+/// Dialog กำหนดราคา
+/// เป็น StatefulWidget แยก เพื่อให้ TextEditingController ถูก dispose
+/// ตอนที่ dialog ถูกถอดออกจากต้นไม้จริงๆ (หลังอนิเมชันปิดเสร็จ)
+class _PriceDialog extends StatefulWidget {
+  final String title;
+
+  const _PriceDialog({required this.title});
+
+  @override
+  State<_PriceDialog> createState() => _PriceDialogState();
+}
+
+class _PriceDialogState extends State<_PriceDialog> {
+  final TextEditingController _controller = TextEditingController();
+  String? _errorMessage;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final value = double.tryParse(_controller.text.trim());
+
+    if (value == null || !value.isFinite || value <= 0) {
+      setState(() {
+        _errorMessage = 'กรุณากรอกราคาเป็นตัวเลขที่มากกว่า 0';
+      });
+      return;
+    }
+
+    Navigator.pop(context, value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('กำหนดราคาสินค้า'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('สินค้า: ${widget.title}'),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: InputDecoration(
+              labelText: 'ราคา (บาท)',
+              hintText: 'เช่น 150 หรือ 99.50',
+              errorText: _errorMessage,
+              border: const OutlineInputBorder(),
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('ยกเลิก'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('ยืนยันราคา')),
+      ],
+    );
   }
 }
