@@ -4,17 +4,18 @@ import 'package:provider/provider.dart';
 import '../models/item.dart';
 import '../models/cart_model.dart';
 import '../repositories/item_repository.dart';
-import '../services/gemini_service.dart';
-import 'checkout_page.dart';
 import '../repositories/favorites_repository.dart';
+import '../services/gemini_service.dart';
+import '../services/auth_service.dart';
+import 'checkout_page.dart';
 
 class HomePage extends StatefulWidget {
-  final ItemRepository itemRepository;
+  final List<ItemRepository> repositories;
   final FavoritesRepository favoritesRepository;
 
   const HomePage({
     super.key,
-    required this.itemRepository,
+    required this.repositories,
     required this.favoritesRepository,
   });
 
@@ -23,19 +24,32 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  late Future<List<Item>> _itemsFuture;
+  late Future<List<_SourcedItem>> _itemsFuture;
 
-  // เก็บ ID ของสินค้าที่อยู่ในรายการโปรด
   final Set<int> _favoriteItemIds = <int>{};
 
   @override
   void initState() {
     super.initState();
 
-    _itemsFuture = widget.itemRepository.getItems();
-
-    // โหลดรายการโปรดจากฐานข้อมูลทันทีเมื่อเปิด Home
+    _itemsFuture = _loadAllItems();
     _loadFavorites();
+  }
+
+  Future<List<_SourcedItem>> _loadAllItems() async {
+    final results = await Future.wait(
+      widget.repositories.map((repository) => repository.getItems()),
+    );
+
+    final sourcedItems = <_SourcedItem>[];
+
+    for (var i = 0; i < results.length; i++) {
+      for (final item in results[i]) {
+        sourcedItems.add(_SourcedItem(item: item, sourceIndex: i));
+      }
+    }
+
+    return sourcedItems;
   }
 
   Future<void> _loadFavorites() async {
@@ -60,7 +74,7 @@ class _HomePageState extends State<HomePage> {
         'ช่วยแต่งประโยคทักทายลูกค้าร้านค้าออนไลน์แบบเป็นกันเอง',
       );
 
-      print('Gemini Response: $result');
+      debugPrint('Gemini Response: $result');
 
       if (!mounted) return;
 
@@ -68,7 +82,7 @@ class _HomePageState extends State<HomePage> {
         SnackBar(content: Text(result), duration: const Duration(seconds: 5)),
       );
     } catch (e) {
-      print('Gemini Error: $e');
+      debugPrint('Gemini Error: $e');
 
       if (!mounted) return;
 
@@ -78,6 +92,18 @@ class _HomePageState extends State<HomePage> {
           duration: const Duration(seconds: 5),
         ),
       );
+    }
+  }
+
+  Future<void> _signOut() async {
+    try {
+      await AuthService().signOut();
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('ออกจากระบบไม่สำเร็จ: $e')));
     }
   }
 
@@ -97,14 +123,20 @@ class _HomePageState extends State<HomePage> {
               label: Text('${context.watch<CartModel>().itemCount}'),
               child: const Icon(Icons.shopping_cart),
             ),
+            tooltip: 'ตะกร้าสินค้า',
             onPressed: () => Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const CheckoutPage()),
             ),
           ),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'ออกจากระบบ',
+            onPressed: _signOut,
+          ),
         ],
       ),
-      body: FutureBuilder<List<Item>>(
+      body: FutureBuilder<List<_SourcedItem>>(
         future: _itemsFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
@@ -115,19 +147,22 @@ class _HomePageState extends State<HomePage> {
             return Center(child: Text('เกิดข้อผิดพลาด: ${snapshot.error}'));
           }
 
-          final items = snapshot.data ?? [];
+          final sourcedItems = snapshot.data ?? [];
 
-          if (items.isEmpty) {
+          if (sourcedItems.isEmpty) {
             return const Center(child: Text('ไม่พบสินค้า'));
           }
 
           return ListView.builder(
-            itemCount: items.length,
+            itemCount: sourcedItems.length,
             itemBuilder: (context, index) {
-              final item = items[index];
-
-              // ตรวจจากข้อมูลที่โหลดมาจาก Drift
+              final sourcedItem = sourcedItems[index];
+              final item = sourcedItem.item;
               final isFavorite = _favoriteItemIds.contains(item.id);
+
+              // Repository ตัวแรกคือ API
+              // Repository ตัวที่สองคือ Firestore
+              final isFirestore = sourcedItem.sourceIndex == 1;
 
               return ListTile(
                 leading: Image.network(
@@ -139,13 +174,33 @@ class _HomePageState extends State<HomePage> {
                       const Icon(Icons.broken_image),
                 ),
                 title: Text(item.title),
-                subtitle: Text('${item.price} บาท'),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('${item.price} บาท'),
+                    const SizedBox(height: 4),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Chip(
+                        avatar: Icon(
+                          isFirestore ? Icons.school : Icons.storefront,
+                          size: 16,
+                        ),
+                        label: Text(
+                          isFirestore
+                              ? '🎓 สินค้านักศึกษา'
+                              : '🏪 สินค้าจาก API',
+                        ),
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
+                  ],
+                ),
+                isThreeLine: true,
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // =========================
-                    // ปุ่มรายการโปรด
-                    // =========================
                     IconButton(
                       icon: Icon(
                         isFavorite ? Icons.favorite : Icons.favorite_border,
@@ -186,10 +241,6 @@ class _HomePageState extends State<HomePage> {
                         }
                       },
                     ),
-
-                    // =========================
-                    // ปุ่มตะกร้า
-                    // =========================
                     IconButton(
                       icon: const Icon(Icons.add_shopping_cart),
                       tooltip: 'เพิ่มลงตะกร้า',
@@ -212,4 +263,11 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
+}
+
+class _SourcedItem {
+  final Item item;
+  final int sourceIndex;
+
+  const _SourcedItem({required this.item, required this.sourceIndex});
 }

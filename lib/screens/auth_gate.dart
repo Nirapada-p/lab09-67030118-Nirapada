@@ -35,7 +35,7 @@ class AuthGate extends StatelessWidget {
         }
 
         return MainScaffold(
-          itemRepository: itemRepositories.first,
+          itemRepositories: itemRepositories,
           favoritesRepository: favoritesRepository,
           draftRepository: draftRepository,
         );
